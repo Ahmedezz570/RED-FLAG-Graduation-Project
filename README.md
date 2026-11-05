@@ -22,6 +22,10 @@
 
 
 
+## Mobile app
+
+See the [frontend setup and local testing guide](Frontend/README.md).
+
 ##  Project Development Plan
 
 The project development journey is organized into weekly sprints, with each sprint covering specific development goals, tasks, and deliverables.
