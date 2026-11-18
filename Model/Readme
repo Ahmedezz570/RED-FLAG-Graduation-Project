@@ -1,0 +1,158 @@
+#  RedFlag AI — Mobile Threat Defense Backend
+
+**RedFlag AI** is a multi-layered, real-time Mobile Threat Defense (MTD) backend powered by a **Hybrid AI + Expert Rule-Based Architecture**. It protects smartphone users—particularly seniors and vulnerable users—against Egyptian Arabic & Franco-Arabic scams, OTP hijacking, financial impersonation, and malicious pop-up/browser links across SMS, messaging apps, and browsers.
+
+---
+
+##  System Architecture (6 Defense Layers)
+
+Incoming notifications and URLs pass through a sequential 6-layer pipeline designed for high accuracy, low latency, and zero false-positive annoyance in casual chats:
+
+1. **Smart Noise Gatekeeper:**
+   - Immediately filters out non-threatening notifications (e.g., message reactions, voice notes, stickers, photos) and short casual messages (`< 3 words` with no URLs or digits) in `< 0.1 ms` without invoking heavy ML models.
+2. **Anti-Obfuscation & Normalization:**
+   - Cleans adversarial text tricks such as Arabic tatweel (`فـودافـون`), spaced-out characters (`ف و د ا ف و ن`), repeated letters, and orthographic variations before analysis.
+3. **App-Aware Routing & Context Rules:**
+   - **SMS:** Flags personal 11-digit Egyptian mobile numbers (`010/011/012/015`) impersonating banks, telecoms, or government entities, as well as fake customer-support mobile numbers.
+   - **WhatsApp:** Detects money, airtime, or wallet transfer requests originating from unknown contacts.
+   - **Messenger / Instagram / Telegram:** Detects official entity impersonation in profile names and flags compromised friend accounts urgently requesting money transfers to external phone numbers or `@instapay` addresses.
+   - **Classic Egyptian Fraud Heuristics:** Detects common social engineering patterns (antiquities/treasures, red mercury, frozen currency, and spiritual scams) from unknown senders.
+4. **Cross-App OTP Shield:**
+   - Tracks incoming SMS verification codes (`OTP`) within a **180-second sliding window**. If an unknown sender on WhatsApp, Messenger, Instagram, or Telegram asks for digits or a message sent "by mistake" during that window, an immediate high-priority alert is triggered.
+5. **Hybrid AI & URL Threat Engine:**
+   - **MARBERTv2 Classifier:** Fine-tuned transformer model for deep semantic detection of Egyptian Arabic and Franco-Arabic fraud patterns.
+   - **Random Forest + URL Heuristics:** Evaluates links in `< 10 ms`, blocking malicious `.apk` downloads, Punycode spoofing (`xn--`), fake virus scareware, abused cheap TLDs (`.xyz`, `.help`, `.cfd`, etc.), and high-risk ad sources (e.g., `SHAREit`).
+6. **Active Learning & In-Memory Caching:**
+   - Caches repeated message hashes (`MSG_CACHE`) and scanned URLs (`URL_CACHE`) for instant responses, while logging user-reported false positives/negatives into SQLite (`feedback.db`) for continuous retraining.
+
+---
+
+## 📱 Android Client Integration Requirements
+
+To utilize all server capabilities and achieve device-wide protection, the Android client must implement the following components:
+
+### 1. Notification Interception (`NotificationListenerService`)
+- Request `BIND_NOTIFICATION_LISTENER_SERVICE` permission to capture incoming message and browser notifications in real time.
+- **Implement a Strict Package Whitelist** on the client side so only target apps are forwarded to the API (saving battery and bandwidth):
+  - **SMS:** `com.google.android.apps.messaging`, `com.samsung.android.messaging`
+  - **Messaging & Social:** `com.whatsapp`, `com.whatsapp.w4b`, `com.facebook.orca`, `com.instagram.android`, `org.telegram.messenger`
+  - **Browsers:** `com.android.chrome`, `com.sec.android.app.sbrowser`
+- **Contact Verification (`ContactsContract`):** For `SMS` and `WhatsApp`, check whether the sender's phone number exists in the user's contacts and pass `"is_known_contact": true/false`.
+
+### 2. Pre-Browser Link Interceptor (`Intent Filter`)
+- Register an `ACTION_VIEW` intent filter for `http` and `https` schemes so RedFlag acts as a security gateway before opening external links.
+- When a user taps an ad pop-up inside third-party apps (such as **SHAREit** or games), send the URL to `POST /check-url` first:
+  - If `"action": "SAFE"`, forward the URL to Chrome.
+  - If `"action": "RED_FLAG_ALERT"`, block navigation and display the warning screen.
+
+### 3. System Overlay Warning (`SYSTEM_ALERT_WINDOW`)
+- When the API returns `"action": "RED_FLAG_ALERT"`, display an immediate floating alert banner over the active app showing the human-readable Arabic explanation from the `"reason"` field.
+- Include a **"False Alarm / Report Mistake" (`اعترضت غلط`)** button wired to `POST /feedback`.
+
+---
+
+##  API Reference & Authentication
+
+### Authentication
+All endpoints require the API key header:
+```http
+X-API-Key: RedFlag_2026_Secret#99
+Content-Type: application/json
+```
+
+---
+
+### 1. Analyze Notification / Message (`POST /predict`)
+Evaluates incoming messages from SMS, WhatsApp, Messenger, Instagram, Telegram, or browser push notifications.
+
+**Request Body:**
+```json
+{
+  "text": "يا اسطى مزنوق في 500 جنيه ضروري حولهملي على الرقم ده 01099887766",
+  "app_source": "messenger",
+  "sender_title": "كريم محمود",
+  "is_known_contact": false,
+  "user_id": "device_uuid_123"
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "is_scam": true,
+  "confidence": 96.0,
+  "reason": "تحذير: طلب تحويل أموال لحساب خارجي عبر السوشيال ميديا (تأكد هاتفياً من صديقك لاحتمال سرقة حسابه)",
+  "text_risk": 0.0,
+  "url_risk": 0.0,
+  "detected_urls": [],
+  "action": "RED_FLAG_ALERT"
+}
+```
+
+---
+
+### 2. Fast URL & Ad Scanner (`POST /check-url`)
+Low-latency endpoint (`< 10 ms`) dedicated to browser redirects and third-party in-app ad pop-ups.
+
+**Request Body:**
+```json
+{
+  "url": "[http://android-security-alert.xyz/cleaner.apk](http://android-security-alert.xyz/cleaner.apk)",
+  "source_app": "shareit"
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "url": "[http://android-security-alert.xyz/cleaner.apk](http://android-security-alert.xyz/cleaner.apk)",
+  "source_app": "shareit",
+  "is_scam": true,
+  "url_risk": 99.0,
+  "reason": "تحذير خطير: رابط يحاول تحميل تطبيق خارجي (.apk) قد يسرق بيانات الهاتف",
+  "action": "RED_FLAG_ALERT"
+}
+```
+
+---
+
+### 3. Submit User Correction (`POST /feedback`)
+Logs false positives or missed scams into `feedback.db` for active learning updates.
+
+**Request Body:**
+```json
+{
+  "text": "تم تجديد باقة فليكس بنجاح",
+  "is_actually_scam": false
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "status": "saved",
+  "message": "تم تسجيل التصحيح وإضافته لقائمة التحديث القادمة",
+  "pending_corrections": 1
+}
+```
+
+---
+
+##  Local & Docker Deployment
+
+### Prerequisites
+1. Request access and download the fine-tuned `egyptian_scam_model/` folder from Google Drive: **[Download Model Here](https://drive.google.com/drive/folders/1EvRydyZ-Ox1JFTlMHSGFC3PfatVxdU1S?usp=sharing)**
+2. Extract and place `egyptian_scam_model/` inside the `Model/` directory alongside `app.py` and `url_model.joblib`.
+
+### Run Locally
+```bash
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+Interactive API documentation is available at `http://127.0.0.1:8000/docs` (use the `Authorize` button with `X-API-Key`).
+
+### Run with Docker
+```bash
+docker build -t redflag-ai-server .
+docker run -d --restart always -p 8000:7860 -e REDFLAG_API_KEY="YOUR_SECRET_KEY_HERE" redflag-ai-server
+```
