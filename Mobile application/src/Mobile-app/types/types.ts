@@ -17,7 +17,7 @@ export interface RegisterValues {
 
 export type FormErrors<T> = Partial<Record<keyof T, string>>;
 
-export type ButtonVariant = 'primary' | 'link';
+export type ButtonVariant = 'primary' | 'link' | 'outline';
 
 export interface ButtonProps {
   title: string;
@@ -63,4 +63,29 @@ export interface SplashPageProps {
 
 export interface AuthPageProps {
   onNavigate: (screen: ScreenName) => void;
+}
+
+export type ScanMode = 'message' | 'link';
+
+export interface ScanResult {
+  verdict: 'caution' | 'no-flags';
+  reason: string;
+  nextStep: string;
+}
+
+export type ScanRequest = (mode: ScanMode, input: string) => Promise<ScanResult>;
+
+export interface ProfileUser {
+  name: string;
+  email: string;
+}
+
+export interface HomePageProps {
+  onScan: (mode: ScanMode) => void;
+}
+
+export interface ProfilePageProps {
+  user: ProfileUser;
+  onOpenAbout: () => void;
+  onSignOut: () => void;
 }
